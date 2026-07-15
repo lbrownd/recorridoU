@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitácora de Rastreo GPS - Flota de Buses</title>
+    <!-- Cargamos los estilos locales desde nuestro servidor -->
+    <link rel="stylesheet" href="/leaflet.css" />
+    <!-- Cliente de Socket.io -->
+    <script src="/socket.io/socket.io.js"></script>
+    <!-- Cargamos el script local desde nuestro servidor -->
+    <script src="/leaflet.js"></script>
+</head>
+<body style="font-family: Arial, sans-serif; padding: 20px; max-width: 1000px; margin: 0 auto; background-color: #f4f6f9;">
+    <h2>Rastreo y Bitácora de Navegación de Personal (Flota)</h2>
+    
+    <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 20px;">
+        <!-- Panel del Conductor -->
+        <div style="flex: 1; min-width: 280px; border: 1px solid #ccc; padding: 15px; border-radius: 8px; background-color: white; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+            <h3 style="margin-top:0; color: #2e7d32;">🟢 Lado del Conductor (GPS Real)</h3>
+            <button id="btn-viaje" onclick="toggleGpsReal()" style="padding: 10px 15px; cursor: pointer; background-color: #2e7d32; color: white; border: none; border-radius: 4px; font-weight: bold; width: 100%;">Activar Mi GPS Real</button>
+            <p id="envio-status" style="margin-bottom:0; font-weight: bold; margin-top: 15px;">Estado: GPS Apagado</p>
+            <div id="diagnostico-chofer" style="margin-top: 10px; font-size: 12px; color: #666; display: none;">
+                🛰️ Precisión actual: <span id="chk-precision">-</span>
+            </div>
+        </div>
+
+        <!-- Panel del Pasajero -->
+        <div style="flex: 1; min-width: 280px; border: 1px solid #ccc; padding: 15px; border-radius: 8px; background-color: white; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+            <h3 style="margin-top:0; color: #1565c0;">🔵 Lado del Pasajero/Usuario</h3>
+            <p style="margin-top:0;">Monitoreando: <b>Ruta_Norte</b></p>
+            <div id="coordenadas-recibidas" style="margin-bottom:0; color: #555;">Esperando señal de ubicación real...</div>
+        </div>
+    </div>
+
+    <!-- Contenedor del Mapa con dimensiones explícitas -->
+    <div id="mapa" style="width: 100%; height: 500px; min-height: 450px; display: block; border: 1px solid #ccc; background-color: #e5e7eb; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); z-index: 1;"></div>
+    <script>
+        let socket = null;
+        let watchId = null; 
+        let map = null;
+        let marcadorVehiculo = null;
+        let lineaTrayectoria = null;
+        let marcadorSalida = null; 
+        let esPrimerPunto = true;
+
+        const rutaId = "Ruta_Norte"; 
+        let latInicial = 12.1364; 
+        let lngInicial = -86.2514;
+
+        document.addEventListener("DOMContentLoaded", () => {
+            if (typeof io !== 'undefined') socket = io();
+
+            if (typeof L !== 'undefined') {
+                try {
+                    map = L.map('mapa').setView([latInicial, lngInicial], 14);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+                    // CORRECCIÓN CRÍTICA: Añadidos los tamaños numéricos correctos de Leaflet
+                    const iconoBus = L.divIcon({
+                        html: '<div style="font-size: 32px; line-height: 1; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">🚌</div>',
+                        iconSize: [40, 40],
+                        iconAnchor: [20, 20], 
+                        popupAnchor: [0, -15],
+                        className: 'marcador-bus-personalizado'
+                    });
+
+                    marcadorVehiculo = L.marker([latInicial, lngInicial], { icon: iconoBus }).addTo(map)
+                        .bindPopup("<b>Transporte:</b> Ruta Norte en marcha")
+                        .openPopup();
+
+                    // Configuración del trazo de la bitácora
+                    lineaTrayectoria = L.polyline([], { 
+                        color: '#2563eb', 
+                        weight: 6,        
+                        opacity: 0.85,    
+                        lineJoin: 'round' 
+                    }).addTo(map);
+
+                    setTimeout(() => { map.invalidateSize(); }, 300);
+                } catch (error) {
+                    console.error("Error al montar Leaflet:", error);
+                }
+            }
+
+            if (socket) {
+                socket.on(`usuario_recibe_ruta_${rutaId}`, (data) => {
+                    const hora = data.ultimaActualizacion || new Date().toLocaleTimeString();
+                    const nuevasCoordenadas = [parseFloat(data.lat), parseFloat(data.lng)];
+
+                    // Registro del hito de salida en el mapa
+                    if (esPrimerPunto) {
+                        esPrimerPunto = false;
+                        
+                        marcadorSalida = L.circleMarker(nuevasCoordenadas, {
+                            radius: 8,
+                            fillColor: "#10b981", 
+                            color: "#ffffff",
+                            weight: 2,
+                            fillOpacity: 1
+                        }).addTo(map).bindPopup("<b>🏁 Bitácora:</b> Punto de Salida / Despacho").openPopup();
+
+                        map.setView(nuevasCoordenadas, 16, { animate: true });
+                    }
+                    
+                    document.getElementById('coordenadas-recibidas').innerHTML = `
+                        📌 <b>Ubicación Real Recibida:</b><br>
+                        Latitud: ${parseFloat(data.lat).toFixed(6)} | Longitud: ${parseFloat(data.lng).toFixed(6)}<br>
+                        Velocidad: ${data.velocidad !== null ? data.velocidad + ' km/h' : '0 km/h'} <br>
+                        <small style="color: #64748b;">Margen de error GPS: ±${data.precision}m</small><br>
+                        <small style="color:#2563eb; font-weight:bold;">🕒 Actualizado: ${hora}</small>
+                    `;
+                    
+                    if (map) {
+                        map.invalidateSize();
+                        if (marcadorVehiculo) marcadorVehiculo.setLatLng(nuevasCoordenadas);
+                        if (lineaTrayectoria) lineaTrayectoria.addLatLng(nuevasCoordenadas);
+                        map.panTo(nuevasCoordenadas);
+                    }
+                });
+            }
+        });
+
+        function procesarYEnviarGps(position) {
+            const status = document.getElementById('envio-status');
+            const chkPrecision = document.getElementById('chk-precision');
+            
+            const latReal = position.coords.latitude;
+            const lngReal = position.coords.longitude;
+            const precisionMetros = Math.round(position.coords.accuracy);
+            let velocidadKmh = position.coords.speed ? Math.round(position.coords.speed * 3.6) : 0;
+
+            if (precisionMetros > 45) {
+                status.innerText = "Señal débil, buscando precisión satelital...";
+                status.style.color = "#eab308";
+                return;
+            }
+
+            status.innerText = "Estado: Transmitiendo EN VIVO 🛰️";
+            status.style.color = "#2e7d32";
+            chkPrecision.innerText = `${precisionMetros} metros`;
+
+            const datosGpsReales = {
+                rutaId: rutaId,
+                lat: parseFloat(latReal.toFixed(6)),
+                lng: parseFloat(lngReal.toFixed(6)),
+                velocidad: velocidadKmh,
+                precision: precisionMetros
+            };
+
+            if (socket) socket.emit('conductor_envia_coordenadas', datosGpsReales);
+        }
+
+        function toggleGpsReal() {
+            const btn = document.getElementById('btn-viaje');
+            const status = document.getElementById('envio-status');
+            const diag = document.getElementById('diagnostico-chofer');
+
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+                btn.innerText = "Activar Mi GPS Real";
+                btn.style.backgroundColor = "#2e7d32";
+                status.innerText = "Estado: GPS Apagado";
+                status.style.color = "#000";
+                diag.style.display = "none";
+                esPrimerPunto = true; 
+                if(lineaTrayectoria) lineaTrayectoria.setLatLngs([]); 
+                if(marcadorSalida) { map.removeLayer(marcadorSalida); marcadorSalida = null; }
+                return;
+            }
+
+            if (!navigator.geolocation) {
+                alert("Tu hardware no soporta geolocalización.");
+                return;
+            }
+
+            btn.innerText = "Apagar Rastreo";
+            btn.style.backgroundColor = "#c62828";
+            status.innerText = "Conectando satélites...";
+            status.style.color = "#eab308";
+            diag.style.display = "block";
+
+            const opcionesGps = { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 };
+
+            navigator.geolocation.getCurrentPosition((posInicial) => {
+                procesarYEnviarGps(posInicial);
+
+                watchId = navigator.geolocation.watchPosition((posMovimiento) => {
+                    procesarYEnviarGps(posMovimiento);
+                }, (error) => {
+                    console.error(error);
+                }, opcionesGps);
+
+            }, (error) => {
+                console.error(error);
+                status.innerText = `Error de conexión GPS. Verifique HTTPS o Localhost.`;
+                status.style.color = "#c62828";
+                if(watchId) navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+                btn.innerText = "Activar Mi GPS Real";
+                btn.style.backgroundColor = "#2e7d32";
+                diag.style.display = "none";
+            }, opcionesGps);
+        }
+    </script>
+</body>
+</html>

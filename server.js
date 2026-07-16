@@ -1,3 +1,4 @@
+process.env.TZ = 'America/Managua'; // Forzar horario de Nicaragua en la nube
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');

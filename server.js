@@ -2,42 +2,93 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-    cors: { origin: "*", methods: ["GET", "POST"] }
-});
+const io = new Server(server, { cors: { origin: "*", methods: ["GET", "POST"] } });
 
 const PORT = process.env.PORT || 3000;
-let historialRutaNorte = [];
 
-app.get('/', (req, res) => { res.sendFile(path.join(__dirname, 'index.html')); });
-app.get('/leaflet.js', (req, res) => { res.sendFile(path.join(__dirname, 'node_modules', 'leaflet', 'dist', 'leaflet.js')); });
-app.get('/leaflet.css', (req, res) => { res.sendFile(path.join(__dirname, 'node_modules', 'leaflet', 'dist', 'leaflet.css')); });
+// CONEXIÓN A BASE DE DATOS LOCAL
+const db = new sqlite3.Database(path.join(__dirname, 'database.sqlite'), (err) => {
+    if (err) console.error("Error base de datos:", err.message);
+    else console.log("💾 Base de datos SQLite conectada con éxito.");
+});
 
-// NUEVA RUTA: Servir el archivo de lógica de forma local
-app.get('/app.js', (req, res) => { res.sendFile(path.join(__dirname, 'app.js')); });
+// Crear tabla histórica si no existe
+db.run(`CREATE TABLE IF NOT EXISTS bitacora_gps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rutaId TEXT,
+    lat REAL,
+    lng REAL,
+    velocidad INTEGER,
+    precision INTEGER,
+    fecha TEXT,
+    hora TEXT
+)`);
 
+app.use(express.json());
+
+// Rutas para servir archivos al navegador
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get('/leaflet.js', (req, res) => res.sendFile(path.join(__dirname, 'node_modules', 'leaflet', 'dist', 'leaflet.js')));
+app.get('/leaflet.css', (req, res) => res.sendFile(path.join(__dirname, 'node_modules', 'leaflet', 'dist', 'leaflet.css')));
+
+// API para que el calendario del supervisor consulte rutas pasadas
+app.get('/api/historial', (req, res) => {
+    const { ruta, fecha } = req.query;
+    db.all(
+        `SELECT lat, lng, velocidad, precision, hora FROM bitacora_gps WHERE rutaId = ? AND fecha = ? ORDER BY id ASC`,
+        [ruta, fecha],
+        (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json(rows);
+        }
+    );
+});
+
+// CANALES DE COMUNICACIÓN EN TIEMPO REAL
 io.on('connection', (socket) => {
-    console.log(`📡 Nuevo dispositivo conectado: ${socket.id}`);
-    if (historialRutaNorte.length > 0) { socket.emit('cargar_historial_bitacora', historialRutaNorte); }
+    console.log(`📡 Dispositivo conectado: ${socket.id}`);
 
+    // Cargar la ruta activa de hoy automáticamente si el supervisor refresca la página
+    const hoy = new Date().toISOString().split('T')[0];
+    db.all(
+        `SELECT lat, lng, velocidad, precision, hora FROM bitacora_gps WHERE rutaId = 'Ruta_Norte' AND fecha = ? ORDER BY id ASC`,
+        [hoy],
+        (err, rows) => {
+            if (!err && rows.length > 0) socket.emit('cargar_historial_bitacora', rows);
+        }
+    );
+
+    // Escuchar coordenadas del conductor y guardarlas en la base de datos antes de retransmitir
     socket.on('conductor_envia_coordenadas', (data) => {
-        data.ultimaActualizacion = new Date().toLocaleTimeString();
-        historialRutaNorte.push(data);
-        if (historialRutaNorte.length > 5000) { historialRutaNorte.shift(); }
-        console.log(`🚗 [${data.rutaId}] Historial: ${historialRutaNorte.length} pts | Lat: ${data.lat}`);
+        const ahora = new Date();
+        const f = ahora.toISOString().split('T')[0];
+        const h = ahora.toLocaleTimeString();
+
+        data.ultimaActualizacion = h;
+
+        db.run(
+            `INSERT INTO bitacora_gps (rutaId, lat, lng, velocidad, precision, fecha, hora) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [data.rutaId, data.lat, data.lng, data.velocidad || 0, data.precision, f, h],
+            (err) => {
+                if (err) console.error("Error al guardar en BD:", err.message);
+            }
+        );
+
         io.emit(`usuario_recibe_ruta_${data.rutaId}`, data);
     });
 
     socket.on('finalizar_viaje_limpiar_bitacora', () => {
-        historialRutaNorte = [];
-        console.log("🧹 Bitácora reseteada por el conductor.");
         io.emit('limpiar_mapa_pasajeros');
     });
 
-    socket.on('disconnect', () => { console.log(`❌ Dispositivo desconectado: ${socket.id}`); });
+    socket.on('disconnect', () => console.log(`❌ Dispositivo desconectado: ${socket.id}`));
 });
 
-server.listen(PORT, '0.0.0.0', () => { console.log(`🚀 Servidor corriendo en el puerto ${PORT}`); });
+// Levantar el servicio
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Servidor de tracking corriendo en el puerto ${PORT}`);
+});

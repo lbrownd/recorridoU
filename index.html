@@ -48,7 +48,13 @@
 
         document.addEventListener("DOMContentLoaded",()=>{
             // Configurar el calendario web con la fecha de hoy por defecto
-            document.getElementById('select-fecha').value = new Date().toISOString().split('T')[0];
+       //     document.getElementById('select-fecha').value = new Date().toISOString().split('T')[0];
+            const localDate = new Date();
+const yyyy = localDate.getFullYear();
+const mm = String(localDate.getMonth() + 1).padStart(2, '0');
+const dd = String(localDate.getDate()).padStart(2, '0');
+document.getElementById('select-fecha').value = `${yyyy}-${mm}-${dd}`;
+
 
             if(typeof io!=='undefined')socket=io();
             if(typeof L!=='undefined'){

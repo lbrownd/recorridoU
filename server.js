@@ -5,24 +5,19 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+    cors: { origin: "*", methods: ["GET", "POST"] }
+});
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
-// Servir la interfaz web unificada (index.html) para cualquier ruta de acceso
+// BITÁCORA EN MEMORIA: Guardará el historial de coordenadas del viaje activo
+let historialRutaNorte = [];
+
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-app.get('/pasajero', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
-
-app.get('/conductor', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
-
-// Servir dependencias de mapas de forma local desde node_modules
 app.get('/leaflet.js', (req, res) => {
     res.sendFile(path.join(__dirname, 'node_modules', 'leaflet', 'dist', 'leaflet.js'));
 });
@@ -31,33 +26,51 @@ app.get('/leaflet.css', (req, res) => {
     res.sendFile(path.join(__dirname, 'node_modules', 'leaflet', 'dist', 'leaflet.css'));
 });
 
-// Gestión de la comunicación por Sockets
 io.on('connection', (socket) => {
-    console.log(`📡 Dispositivo conectado al sistema: ${socket.id}`);
+    console.log(`📡 Nuevo dispositivo conectado: ${socket.id}`);
+
+    // NUEVO: En cuanto un pasajero/supervisor conecta su pantalla, 
+    // el servidor le envía de golpe todo el camino que el bus ya recorrió
+    if (historialRutaNorte.length > 0) {
+        socket.emit('cargar_historial_bitacora', historialRutaNorte);
+    }
 
     socket.on('conductor_envia_coordenadas', (data) => {
-        // Estampa de tiempo oficial generada por el reloj del servidor
         data.ultimaActualizacion = new Date().toLocaleTimeString();
-        
-        // Control de respaldo por si la precisión llega vacía desde el teléfono
         const margenPrecision = data.precision !== undefined ? data.precision : 'Desconocida';
-        const velocidadActual = data.velocidad !== null ? data.velocidad : 0;
         
-        // Log limpio y estandarizado en la terminal para monitoreo en vivo
-        console.log(`🚗 [${data.rutaId}] Lat: ${data.lat}, Lng: ${data.lng} | Precisión: ${margenPrecision}m | Vel: ${velocidadActual} km/h`);
+        // Guardamos el punto actual en nuestra bitácora del servidor
+        historialRutaNorte.push({
+            lat: data.lat,
+            lng: data.lng,
+            velocidad: data.velocidad,
+            precision: data.precision,
+            ultimaActualizacion: data.ultimaActualizacion
+        });
+
+        // Limpieza de seguridad: Si la bitácora supera los 5,000 puntos (muchas horas de viaje), 
+        // borramos el punto más antiguo para proteger la memoria del servidor
+        if (historialRutaNorte.length > 5000) {
+            historialRutaNorte.shift();
+        }
+
+        console.log(`🚗 [${data.rutaId}] Historial: ${historialRutaNorte.length} pts | Lat: ${data.lat} | Precisión: ${margenPrecision}m`);
         
-        // Retransmitir de forma masiva a todos los clientes que monitorean la ruta
         io.emit(`usuario_recibe_ruta_${data.rutaId}`, data);
     });
 
+    // NUEVO: Evento para que el conductor pueda limpiar la bitácora al terminar su jornada
+    socket.on('finalizar_viaje_limpiar_bitacora', () => {
+        historialRutaNorte = [];
+        console.log("🧹 Bitácora de viaje reseteada por el conductor.");
+        io.emit('limpiar_mapa_pasajeros');
+    });
+
     socket.on('disconnect', () => {
-        console.log(`❌ Dispositivo desconectado del sistema: ${socket.id}`);
+        console.log(`❌ Dispositivo desconectado: ${socket.id}`);
     });
 });
 
-// Levantar el servicio escuchando en 0.0.0.0 (Obligatorio para pruebas por red local/Wi-Fi)
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 SERVIDOR COMPATIBLE CON GPS REAL CORRIENDO`);
-    console.log(`▶️ Enlace para pruebas locales (PC):  http://localhost:${PORT}`);
-    console.log(`⚠️ REQUISITO PARA CELULARES: Debes acceder mediante HTTPS (vía túnel) o configurar tu IP local.`);
+    console.log(`🚀 Servidor con memoria de bitácora corriendo en el puerto ${PORT}`);
 });

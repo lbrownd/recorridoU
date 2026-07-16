@@ -9,6 +9,7 @@ document.addEventListener("DOMContentLoaded", () => {
             map = L.map('mapa').setView([latInicial, lngInicial], 14);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
+            // CORRECCIÓN: Dimensiones explícitas y fijas para el Autobús
             const iconoBus = L.divIcon({
                 html: '<div style="font-size: 32px; line-height:1; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">🚌</div>',
                 iconSize:,
@@ -58,7 +59,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 📌 <b>Ubicación Real Recibida:</b><br>
                 Latitud: ${pos[0].toFixed(6)} | Longitud: ${pos[1].toFixed(6)}<br>
                 Velocidad: ${data.velocidad || 0} km/h<br>
-                <small style="color: #64748b;">Margen de error GPS: ±${data.precision}m</small>
+                <small style="color: #64748b;">Margen de error GPS: ±${data.precision}m</small><br>
+                <small style="color:#2563eb; font-weight:bold;">🕒 Actualizado: ${hora}</small>
             `;
             
             if (map) {
@@ -91,14 +93,16 @@ function procesarYEnviarGps(position) {
 function solicitarPinApagado(tipo) {
     if (watchId === null && tipo === 'pausa') { arrancarGpsFisico(); return; }
     accionPendiente = tipo;
-    document.getElementById('contenedor-pin').style.style.display = 'block';
+    // CORRECCIÓN: Sintaxis de CSS limpia para desplegar el teclado
+    document.getElementById('contenedor-pin').style.display = 'block';
     document.getElementById('input-pin').value = '';
     document.getElementById('input-pin').focus();
 }
 
 function validarPinConfirmacion() {
     if (document.getElementById('input-pin').value === PIN_AUTORIZADO) {
-        document.getElementById('contenedor-pin').style.style.display = 'none';
+        // CORRECCIÓN: Sintaxis de CSS limpia para ocultar el teclado
+        document.getElementById('contenedor-pin').style.display = 'none';
         if (accionPendiente === 'pausa') apagarGpsFisico();
         else if (accionPendiente === 'finalizar') ejecutarCierreJornada();
     } else {
@@ -107,7 +111,7 @@ function validarPinConfirmacion() {
     }
 }
 
-function cancelarApagado() { document.getElementById('contenedor-pin').style.style.display = 'none'; accionPendiente = ""; }
+function cancelarApagado() { document.getElementById('contenedor-pin').style.display = 'none'; accionPendiente = ""; }
 
 function arrancarGpsFisico() {
     const btn = document.getElementById('btn-viaje'), btnFin = document.getElementById('btn-finalizar'), status = document.getElementById('envio-status'), diag = document.getElementById('diagnostico-chofer');

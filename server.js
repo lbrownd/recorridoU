@@ -53,8 +53,13 @@ app.get('/api/historial', (req, res) => {
 io.on('connection', (socket) => {
     console.log(`📡 Dispositivo conectado: ${socket.id}`);
 
-    // Cargar la ruta activa de hoy automáticamente si el supervisor refresca la página
-    const hoy = new Date().toISOString().split('T')[0];
+    // CORRECCIÓN: Calcular la fecha de hoy con el calendario local de Nicaragua
+    const localDate = new Date();
+    const yyyy = localDate.getFullYear();
+    const mm = String(localDate.getMonth() + 1).padStart(2, '0');
+    const dd = String(localDate.getDate()).padStart(2, '0');
+    const hoy = `${yyyy}-${mm}-${dd}`;
+
     db.all(
         `SELECT lat, lng, velocidad, precision, hora FROM bitacora_gps WHERE rutaId = 'Ruta_Norte' AND fecha = ? ORDER BY id ASC`,
         [hoy],
@@ -66,7 +71,12 @@ io.on('connection', (socket) => {
     // Escuchar coordenadas del conductor y guardarlas en la base de datos antes de retransmitir
     socket.on('conductor_envia_coordenadas', (data) => {
         const ahora = new Date();
-        const f = ahora.toISOString().split('T')[0];
+        
+        // CORRECCIÓN: Forzamos el guardado de la fecha usando el calendario local de Nicaragua
+        const y = ahora.getFullYear();
+        const m = String(ahora.getMonth() + 1).padStart(2, '0');
+        const d = String(ahora.getDate()).padStart(2, '0');
+        const f = `${y}-${m}-${d}`;
         const h = ahora.toLocaleTimeString();
 
         data.ultimaActualizacion = h;

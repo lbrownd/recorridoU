@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel del Conductor - GPS en Vivo</title>
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body style="font-family: Arial, sans-serif; background-color: #111827; color: white; padding: 20px; text-align: center;">
+
+    <div style="max-width: 500px; margin: 40px auto; padding: 20px; border-radius: 12px; background-color: #1f2937; box-shadow: 0 4px 10px rgba(0,0,0,0.3);">
+        <h2 style="color: #4ade80; margin-bottom: 5px;">🟢 MÓDULO CONDUCTOR</h2>
+        <p style="color: #9ca3af; margin-top: 0;">Transmisión de GPS en Tiempo Real</p>
+        
+        <div style="margin: 30px 0;">
+            <p style="font-size: 14px; color: #9ca3af; margin-bottom: 5px;">Ruta Activa</p>
+            <span style="background-color: #374151; padding: 8px 16px; border-radius: 20px; font-weight: bold; font-size: 18px; color: #3b82f6;">Ruta_Norte</span>
+        </div>
+
+        <button id="btn-gps" onclick="toggleGpsReal()" style="width: 100%; padding: 20px; font-size: 18px; font-weight: bold; border: none; border-radius: 8px; background-color: #22c55e; color: white; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: 0.2s;">
+            INICIAR TRANSMISIÓN GPS
+        </button>
+
+        <div style="margin-top: 30px; padding: 15px; background-color: #111827; border-radius: 8px; text-align: left;">
+            <p id="envio-status" style="font-weight: bold; color: #ef4444; margin-top: 0; text-align: center;">Estado: Inactivo</p>
+            <div id="telemetria" style="font-size: 13px; color: #9ca3af; display: none; line-height: 1.6;">
+                <hr style="border-color: #374151;">
+                🛰️ <b>Precisión del sensor:</b> <span id="val-precision">-</span><br>
+                🚗 <b>Velocidad actual:</b> <span id="val-velocidad">-</span> km/h<br>
+                📌 <b>Último envío:</b> <span id="val-coordenadas">-</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let socket = io();
+        let watchId = null;
+        const rutaId = "Ruta_Norte";
+
+        // Función reutilizable para empaquetar y mandar los datos al backend
+        function procesarYEnviarGps(position) {
+            const status = document.getElementById('envio-status');
+            const telemetria = document.getElementById('telemetria');
+            
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const accuracy = Math.round(position.coords.accuracy);
+            let speed = position.coords.speed ? Math.round(position.coords.speed * 3.6) : 0;
+
+            status.innerText = "Estado: Transmitiendo EN VIVO 🛰️";
+            status.style.color = "#4ade80";
+            telemetria.style.display = "block";
+
+            document.getElementById('val-precision').innerText = `${accuracy} metros`;
+            document.getElementById('val-velocidad').innerText = speed;
+            document.getElementById('val-coordenadas').innerText = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+
+            socket.emit('conductor_envia_coordenadas', {
+                rutaId: rutaId,
+                lat: parseFloat(lat.toFixed(6)),
+                lng: parseFloat(lng.toFixed(6)),
+                precision: accuracy,
+                velocidad: speed
+            });
+        }
+
+        function toggleGpsReal() {
+            const btn = document.getElementById('btn-gps');
+            const status = document.getElementById('envio-status');
+            const telemetria = document.getElementById('telemetria');
+
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId); // Detiene el rastreo continuo
+                watchId = null;
+                btn.innerText = "INICIAR TRANSMISIÓN GPS";
+                btn.style.backgroundColor = "#22c55e";
+                status.innerText = "Estado: Inactivo";
+                status.style.color = "#ef4444";
+                telemetria.style.display = "none";
+                return;
+            }
+
+            if (!navigator.geolocation) {
+                alert("Tu dispositivo no cuenta con hardware de geolocalización.");
+                return;
+            }
+
+            btn.innerText = "DETENER TRANSMISIÓN";
+            btn.style.backgroundColor = "#ef4444";
+            status.innerText = "Estado: Conectando con satélites...";
+            status.style.color = "#eab308";
+
+            const opcionesGps = { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 };
+
+            // MEJORA REVOLUCIONARIA: Forzamos un primer disparo instantáneo para romper la inercia
+            navigator.geolocation.getCurrentPosition((firstPosition) => {
+                
+                // Enviar la posición actual de inmediato
+                procesarYEnviarGps(firstPosition);
+
+                // Iniciar el radar continuo para cambios de posición futuros
+                watchId = navigator.geolocation.watchPosition((movingPosition) => {
+                    procesarYEnviarGps(movingPosition);
+                }, (error) => {
+                    console.error("Error en radar continuo:", error);
+                }, opcionesGps);
+
+            }, (error) => {
+                console.error("Error en disparo inicial:", error);
+                status.innerText = `Error: Código ${error.code} - Permiso denegado o HTTP inseguro.`;
+                status.style.color = "#ef4444";
+                
+                // Resetear interfaz si falla el inicio
+                if(watchId) navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+                btn.innerText = "INICIAR TRANSMISIÓN GPS";
+                btn.style.backgroundColor = "#22c55e";
+                
+                if(error.code === 1) {
+                    alert("¡Atención! Navegador bloqueó el GPS. Asegúrate de estar usando 'localhost' en tu computadora o un entorno HTTPS seguro.");
+                }
+            }, opcionesGps);
+        }
+    </script>
+</body>
+</html>
